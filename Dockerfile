@@ -20,9 +20,9 @@ RUN apt-get update \
     && apt-get install -y openjdk-8-jdk openjdk-11-jdk \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up Java environments
-ENV JAVA8_HOME=/usr/lib/jvm/java-8-openjdk-amd64
-ENV JAVA11_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+# Set up Java environments (architecture-aware)
+ENV JAVA8_HOME=/usr/lib/jvm/java-8-openjdk-arm64
+ENV JAVA11_HOME=/usr/lib/jvm/java-11-openjdk-arm64
 ENV JAVA_HOME=$JAVA11_HOME
 ENV PATH=$JAVA_HOME/bin:$PATH
 
@@ -54,13 +54,48 @@ RUN echo "export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64" > java8.env \
     && echo "export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64" > java11.env \
     && echo "export PATH=\$JAVA_HOME/bin:\$PATH" >> java11.env
 
-# Build Java services (with proper error handling)
-RUN bash -c 'source java8.env && cd services/emb && mvn clean install -DskipTests && mvn dependency:build-classpath -Dmdep.outputFile=cp.txt' || echo "EMB build failed, continuing..."
-RUN bash -c 'source java8.env && cd services/genome-nexus && mvn clean install -DskipTests' || echo "Genome-nexus build failed, continuing..."
-RUN bash -c 'source java11.env && cd services/youtube && mvn clean install -DskipTests && mvn dependency:build-classpath -Dmdep.outputFile=cp.txt' || echo "YouTube build failed, continuing..."
+# Clean Maven cache to prevent corrupted dependency issues on ARM64/M-series Macs
+RUN rm -rf /root/.m2/repository
+
+# Build Java services with retries and proper error handling
+# EMB service (Java 8)
+RUN cd services/emb && \
+    for i in 1 2 3; do \
+        echo "Attempt $i: Building EMB service..." && \
+        JAVA_HOME=$JAVA8_HOME PATH=$JAVA8_HOME/bin:$PATH mvn clean install -DskipTests -U -e && \
+        JAVA_HOME=$JAVA8_HOME PATH=$JAVA8_HOME/bin:$PATH mvn dependency:build-classpath -Dmdep.outputFile=cp.txt && \
+        echo "EMB build successful!" && break || \
+        (echo "EMB build attempt $i failed, cleaning and retrying..." && \
+         JAVA_HOME=$JAVA8_HOME PATH=$JAVA8_HOME/bin:$PATH mvn dependency:purge-local-repository -DreResolve=false && \
+         sleep 5); \
+    done || echo "WARNING: EMB build failed after 3 attempts"
+
+# Genome-nexus service (Java 8)
+RUN cd services/genome-nexus && \
+    for i in 1 2 3; do \
+        echo "Attempt $i: Building Genome-nexus service..." && \
+        JAVA_HOME=$JAVA8_HOME PATH=$JAVA8_HOME/bin:$PATH mvn clean install -DskipTests -U -e && \
+        echo "Genome-nexus build successful!" && break || \
+        (echo "Genome-nexus build attempt $i failed, cleaning and retrying..." && \
+         JAVA_HOME=$JAVA8_HOME PATH=$JAVA8_HOME/bin:$PATH mvn dependency:purge-local-repository -DreResolve=false && \
+         sleep 5); \
+    done || echo "WARNING: Genome-nexus build failed after 3 attempts"
+
+# YouTube service (Java 11)
+RUN cd services/youtube && \
+    for i in 1 2 3; do \
+        echo "Attempt $i: Building YouTube service..." && \
+        JAVA_HOME=$JAVA11_HOME PATH=$JAVA11_HOME/bin:$PATH mvn clean install -DskipTests -U -e && \
+        JAVA_HOME=$JAVA11_HOME PATH=$JAVA11_HOME/bin:$PATH mvn dependency:build-classpath -Dmdep.outputFile=cp.txt && \
+        echo "YouTube build successful!" && break || \
+        (echo "YouTube build attempt $i failed, cleaning and retrying..." && \
+         JAVA_HOME=$JAVA11_HOME PATH=$JAVA11_HOME/bin:$PATH mvn dependency:purge-local-repository -DreResolve=false && \
+         sleep 5); \
+    done || echo "WARNING: YouTube build failed after 3 attempts"
 
 # Build RestTestGen
-RUN bash -c 'source java11.env && cd tool/resttestgen && chmod +x gradlew && ./gradlew install' || echo "RestTestGen build failed, continuing..."
+RUN cd tool/resttestgen && chmod +x gradlew && \
+    JAVA_HOME=$JAVA11_HOME PATH=$JAVA11_HOME/bin:$PATH ./gradlew install || echo "RestTestGen build failed, continuing..."
 
 # Create entrypoint script
 RUN echo '#!/bin/bash\n\

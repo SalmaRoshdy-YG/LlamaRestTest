@@ -1165,8 +1165,47 @@ def main():
         iteration += 1
 
 if __name__ == "__main__":
-    llama_ex = Llama(model_path="../../../ex.gguf")
-    llama_ipd = Llama(model_path="../../../ipd.gguf")
+    # Get model paths from config.json or use defaults
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    models_dir = os.path.join(base_dir, "models")
+    config_file = os.path.join(models_dir, "config.json")
+    
+    ex_model_path = None
+    ipd_model_path = None
+    
+    # Try to load from config file
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                ex_model_path = config.get("ex_model_path", "")
+                ipd_model_path = config.get("ipd_model_path", "")
+        except Exception:
+            pass
+    
+    # If paths are empty or don't exist, try defaults in models directory
+    if not ex_model_path or not os.path.exists(ex_model_path):
+        for name in ["ex.gguf", "ex", "EX.gguf"]:
+            default_path = os.path.join(models_dir, name)
+            if os.path.exists(default_path):
+                ex_model_path = default_path
+                break
+    
+    if not ipd_model_path or not os.path.exists(ipd_model_path):
+        for name in ["ipd.gguf", "ipd", "IPD.gguf"]:
+            default_path = os.path.join(models_dir, name)
+            if os.path.exists(default_path):
+                ipd_model_path = default_path
+                break
+    
+    # Fallback to original paths if not found
+    if not ex_model_path or not os.path.exists(ex_model_path):
+        ex_model_path = "../../../ex.gguf"
+    if not ipd_model_path or not os.path.exists(ipd_model_path):
+        ipd_model_path = "../../../ipd.gguf"
+    
+    llama_ex = Llama(model_path=ex_model_path)
+    llama_ipd = Llama(model_path=ipd_model_path)
     base_url = sys.argv[2]
     EPSILON = [0.1]
     threshold = {}
